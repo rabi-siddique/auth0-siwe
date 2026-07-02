@@ -1,0 +1,19 @@
+# Self-hosted Sign-In with Ethereum OIDC provider (spruceid/siwe-oidc).
+# Local test rig: run `docker compose up`, then hit http://localhost:8000/.well-known/openid-configuration
+# For production, we deploy the same image with a managed Redis + a pinned SIWEOIDC_RSA_PEM.
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  siwe-oidc:
+    image: ghcr.io/spruceid/siwe_oidc:latest
+    depends_on:
+      - redis
+    environment:
+      SIWEOIDC_ADDRESS: 0.0.0.0
+      SIWEOIDC_REDIS_URL: redis://redis:6379
+      SIWEOIDC_BASE_URL: http://localhost:8000
+    ports:
+      - '8000:8000'
+    restart: unless-stopped

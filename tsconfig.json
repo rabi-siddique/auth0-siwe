@@ -1,20 +1,12 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
-    "types": ["node"],
+    "module": "ES2022",
+    "moduleResolution": "bundler",
     "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "verbatimModuleSyntax": true,
-    "isolatedModules": true,
-    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "forceConsistentCasingInFileNames": true
+    "skipLibCheck": true,
+    "types": ["node"]
   },
-  "include": ["*.ts", "backend/**/*.ts", "agent/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

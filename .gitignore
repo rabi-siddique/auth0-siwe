@@ -1,18 +1,4 @@
 node_modules
-.pnp*
-.yarn
-
-# build output
-dist
-ui/dist
-*.tsbuildinfo
-
-# logs / env
-*.log
 .env
-.env.local
-
-# editor / OS
-.vscode/
-.idea/
-.DS_Store
+.yarn
+*.pem

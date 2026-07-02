@@ -1,36 +1,27 @@
 {
-  "name": "authn-authz-with-mcps",
-  "version": "0.1.0",
-  "private": true,
+  "name": "auth0 + SIWE",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Prototyping authentication and authorization with MCP servers.",
-  "workspaces": [
-    "ui"
-  ],
+  "packageManager": "yarn@4.13.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
-    "dev": "node --watch backend/server.ts",
-    "start": "node backend/server.ts",
-    "agent": "node agent/agent.ts",
-    "ui": "yarn workspace ui dev",
-    "ui:build": "yarn workspace ui build",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit"
+    "start": "tsx src/http.ts",
+    "start:stdio": "tsx src/server.ts",
+    "dev": "tsx watch src/http.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "cors": "^2.8.6",
-    "ethers": "^6.13.0",
+    "dotenv": "^16.4.7",
     "express": "^5.2.1",
-    "jsonwebtoken": "^9.0.3",
-    "siwe": "^2.3.2"
+    "jose": "^6.2.3",
+    "tsx": "^4.22.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
-    "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^26.0.1",
-    "prettier": "^3.9.4",
-    "typescript": "^6.0.3"
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
   }
 }
