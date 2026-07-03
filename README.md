@@ -190,47 +190,70 @@ Three files do the work:
   | `get_positions`  | `portfolio:positions`  | positions, balances, total value |
   | `get_allocation` | `portfolio:allocation` | target allocation                |
 
-### `src/http.ts` - the Express host
+### `src/worker.ts` - the Cloudflare Workers host (Hono + `@hono/mcp`)
 
-Wires `POST /mcp` behind `requireAuth`, exposes `GET /health`, logs every request. Listens on
-`process.env.PORT || 3000`.
+Wires `POST /mcp` behind the bearer-auth middleware, exposes `GET /health`, serves the
+`.well-known` discovery documents, and logs every request. The MCP transport is
+`@hono/mcp`'s Web-standard `StreamableHTTPTransport` (stateless, `sessionIdGenerator: undefined`,
+`enableJsonResponse: true` - a single JSON reply, no long-lived SSE stream to hold a Worker open).
+
+The token-verification core lives in `src/auth.ts` and is runtime-agnostic (`jose` = Web Crypto), so
+the auth behaviour is identical to before - only the HTTP host changed. The bearer middleware
+verifies the JWT, stashes the `AuthInfo` on the Hono context via `c.set('auth', …)` (which the
+transport reads and threads into each tool's `extra.authInfo`), and on failure returns **401** with a
+`WWW-Authenticate` header pointing at the protected-resource metadata.
+
+`src/server.ts` remains as a local **stdio** entry (`yarn start:stdio`) for testing the tools
+without the HTTP/auth layer.
 
 ---
 
-## 8. Deploy on Sevalla
+## 8. Deploy on Cloudflare Workers
 
-This repo (the MCP server) deploys as its own Sevalla app from GitHub (`rabi-siddique/auth0-siwe`):
+This repo (the MCP server) deploys as a Cloudflare Worker. Config lives in `wrangler.toml`
+(`main: src/worker.ts`, `compatibility_flags: ["nodejs_compat"]`, and the three `vars` below).
 
-1. Create the Application from the repo, branch `main`.
-2. Set the [environment variables](#9-environment-variables) below.
-3. Ensure the container port matches what the app listens on. Sevalla routes to **8080**; the app
-   reads `process.env.PORT`, which Sevalla injects. If `/health` 404s after deploy, add `PORT=8080`
-   explicitly.
-4. **Deploy.** Env-var changes require a redeploy to take effect.
+```bash
+yarn install
+yarn dev                 # local: wrangler dev (workerd) on http://127.0.0.1:8787
+yarn deploy              # wrangler deploy → https://auth0-siwe-mcp.<subdomain>.workers.dev
+```
 
-Deployed URL for this instance: **`https://auth0-siwe-tesj4.sevalla.app`**.
+Because the token audience must equal the server's own public `/mcp` URL, deployment is two-step
+(the same chicken-and-egg the old Sevalla setup had):
 
-> siwe-oidc is a **separate** Sevalla app (see part C) with its own env - it does **not** share this
-> app's `.env`.
+1. First `yarn deploy` to learn the worker's URL (`…workers.dev`, or a custom domain/route).
+2. Set `AUTH0_AUDIENCE` and `MCP_SERVER_URL` in `wrangler.toml` to `https://<that-url>/mcp`
+   (`AUTH0_AUDIENCE` **must equal the Auth0 API identifier exactly** - so update the Auth0 API
+   identifier and the SIWE post-login Action's audience to match too), then `yarn deploy` again.
+3. Add `https://<that-url>/mcp` wherever the old Sevalla URL was referenced in the Auth0 setup.
+
+The three env vars are **non-secret** (issuer domain, audience, public URL - all already published in
+this README) so they live in `wrangler.toml` under `vars`, not as Wrangler secrets. For local dev,
+`wrangler dev` also picks up a `.env` / `.dev.vars` file if present (gitignored).
+
+> siwe-oidc is **unchanged** - it's a Rust Docker service (part C), not a Worker, and keeps its own
+> separate deployment + env. It does **not** share this app's config.
 
 ---
 
 ## 9. Environment variables
 
-Only three - the MCP server is a pure resource server:
+Only three - the MCP server is a pure resource server. They're set as Wrangler `vars` in
+`wrangler.toml`:
 
-| Var              | Value (this deployment)                    | Purpose                                                  |
-| ---------------- | ------------------------------------------ | -------------------------------------------------------- |
-| `AUTH0_DOMAIN`   | `rabi-mcp.us.auth0.com`                    | derives issuer + OIDC discovery + JWKS                   |
-| `AUTH0_AUDIENCE` | `https://auth0-siwe-tesj4.sevalla.app/mcp` | expected `aud` - **must equal the Auth0 API identifier** |
-| `MCP_SERVER_URL` | `https://auth0-siwe-tesj4.sevalla.app/mcp` | this server's public URL; drives the PRM document        |
+| Var              | Value (this deployment)    | Purpose                                                  |
+| ---------------- | -------------------------- | -------------------------------------------------------- |
+| `AUTH0_DOMAIN`   | `rabi-mcp.us.auth0.com`    | derives issuer + OIDC discovery + JWKS                   |
+| `AUTH0_AUDIENCE` | `https://<worker-url>/mcp` | expected `aud` - **must equal the Auth0 API identifier** |
+| `MCP_SERVER_URL` | `https://<worker-url>/mcp` | this server's public URL; drives the PRM document        |
 
 `AUTH0_AUDIENCE` and `MCP_SERVER_URL` **must both point at this deployment's domain**, and
 `AUTH0_AUDIENCE` must match the Auth0 API identifier exactly - otherwise every token's `aud` fails
 verification (401) or discovery breaks.
 
-The server fails fast: if any of the three are missing it throws at startup and exits (so a missing
-var shows up as the whole app being down / 404, not a per-request error).
+The server fails fast: if any of the three are missing, `readConfig` throws on the first request (so a
+missing var shows up as a 500 from the Worker, not a silent wrong-answer).
 
 ---
 

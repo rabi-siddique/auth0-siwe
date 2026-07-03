@@ -1,0 +1,23 @@
+# Portfolio MCP server — OAuth resource server (validates Auth0 JWTs, gates the tools).
+# Stateless: no KV / queues / DB bindings, no secrets — the three vars below are all public.
+name = "auth0-siwe-mcp"
+main = "src/worker.ts"
+# jose uses Web Crypto (no Node needed), but nodejs_compat is a safe backstop for the MCP SDK.
+compatibility_flags = ["nodejs_compat"]
+compatibility_date = "2026-07-01"
+
+[observability]
+enabled = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+persist = true
+
+# Non-secret config (all three are already public in the README). After the first `yarn deploy`
+# you'll know the worker's URL — set AUTH0_AUDIENCE + MCP_SERVER_URL to `https://<that-url>/mcp`
+# (AUTH0_AUDIENCE must equal the Auth0 API identifier exactly) and redeploy. See README §8.
+[vars]
+AUTH0_DOMAIN = "rabi-mcp.us.auth0.com"
+AUTH0_AUDIENCE = "https://auth0-siwe-mcp.rs-first-cf.workers.dev/mcp"
+MCP_SERVER_URL = "https://auth0-siwe-mcp.rs-first-cf.workers.dev/mcp"

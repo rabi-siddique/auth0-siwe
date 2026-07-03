@@ -58,7 +58,7 @@ const requirePortfolio = async (extra: Extra) => {
       `Portfolio lookup failed (${res.status}).`,
     );
   }
-  const { data } = await res.json();
+  const { data } = (await res.json()) as { data?: any };
   log('authz: portfolio authorized —', {
     address,
     portfolioId: data?.portfolioId,

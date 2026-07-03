@@ -1,0 +1,8 @@
+node_modules
+.yarn
+.git
+yarn.lock
+dist
+build
+coverage
+worker-configuration.d.ts

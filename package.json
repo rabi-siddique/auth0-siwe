@@ -7,21 +7,28 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "start": "tsx src/http.ts",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
     "start:stdio": "tsx src/server.ts",
-    "dev": "tsx watch src/http.ts"
+    "codegen": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@hono/mcp": "^0.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^16.4.7",
-    "express": "^5.2.1",
+    "hono": "^4.6.0",
+    "hono-rate-limiter": "^0.4.2",
     "jose": "^6.2.3",
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6",
     "@types/node": "^22.10.1",
-    "typescript": "^5.7.2"
+    "prettier": "^3.6.2",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.20.0"
   }
 }
