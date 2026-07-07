@@ -18,6 +18,7 @@ export type Env = {
   AUTH0_DOMAIN: string; // e.g. "rabi-mcp.us.auth0.com" — derives issuer + discovery + JWKS
   AUTH0_AUDIENCE: string; // expected `aud` claim = our Auth0 API identifier
   MCP_SERVER_URL: string; // this server's public /mcp URL; drives the resource-metadata document
+  CONSENT_SECRET?: string; // HS256 secret shared with the Auth0 Redirect Action (see src/consent.ts)
 };
 
 // The three settings every token is checked against, plus our own public URL for advertising.
@@ -105,17 +106,24 @@ export const makeVerifier = (config: AuthConfig): VerifyAccessToken => {
     ];
     const clientId =
       (payload.azp as string) ?? (payload.client_id as string) ?? '';
+    // The agent wallet the user provisioned at consent (set by the Auth0 Action). A tool would use
+    // this as the Agoric identity that acts on the portfolio.
+    const agent =
+      typeof payload['https://ymax.app/agent'] === 'string'
+        ? (payload['https://ymax.app/agent'] as string)
+        : undefined;
     log('auth: token verified —', {
       sub: payload.sub, // which user (the wallet address, via SIWE)
       clientId, // which MCP client (ChatGPT's DCR id)
       scopes, // granted scopes/permissions
+      agent, // the agent wallet (agoric1…) provisioned at consent
     });
     return {
       token,
       clientId,
       scopes,
       expiresAt: payload.exp,
-      extra: { sub: payload.sub }, // `sub` = the user id, in case a tool needs to know who called.
+      extra: { sub: payload.sub, agent }, // `sub` = user id; `agent` = the agent wallet address.
     };
   };
 };

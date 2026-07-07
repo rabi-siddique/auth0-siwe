@@ -49,6 +49,7 @@ On the API's **Permissions** tab, add:
 | ---------------------- | --------------------------------- |
 | `portfolio:positions`  | read portfolio positions/balances |
 | `portfolio:allocation` | read portfolio target allocation  |
+| `portfolio:rebalance`  | write: rebalance the portfolio    |
 
 ### A.4 - Enable RBAC
 
@@ -62,7 +63,7 @@ On the API's **Settings** tab, turn **both** ON:
 Still on the API's **Settings** tab, under **"Default Permissions for third-party applications"**:
 
 - **User-delegated access = Authorized**
-- Select the two `portfolio:*` scopes.
+- Select the `portfolio:*` scopes.
 
 DCR clients are **always third-party** in Auth0 - you can't grant permissions per-app, so this
 tenant-level default is the _only_ thing that lets ChatGPT request the API at all. Skip it and you
@@ -132,36 +133,66 @@ After this, Auth0's server-to-server calls hit your Cloudflare-free instance and
 
 ---
 
-## 6. Setup part E - grant portfolio scopes to wallet users
+## 6. Setup part E - consent screen: agent wallet + capability selection
 
 A freshly-signed-in wallet is a **brand-new user** with no permissions, so every tool would return
-`Forbidden`. We attach the portfolio scopes at login via an Auth0 **Action**.
+`Forbidden`. Rather than granting every scope wholesale, we show the user a **consent screen** right
+after they sign in that (a) shows the **agent wallet** created to act on their behalf, and (b) offers
+a **checkbox per capability**, granting only what they tick.
+
+### How it works - an Auth0 Redirect Action + a consent page we host
+
+Auth0 **Redirect with Actions** lets a Login-flow Action suspend login, bounce the user to a page we
+control, and resume with data that page returns. We use it to inject the agent wallet + the user's
+scope choice:
+
+1. **Post-login** the Action (`auth0-actions/capability-consent.js`) mints a short-lived HS256 token
+   (`api.redirect.encodeToken`) and redirects the browser to the MCP server's `/consent` page.
+2. **`GET /consent`** (`src/consent.ts`) verifies that token, **creates an Agoric agent wallet**
+   (`src/wallet.ts`, `agoric1…`) and shows its address, then renders a checkbox per scope from the
+   catalog in `src/scopes.ts` (all checked by default).
+3. **`POST /consent`** validates the submission, keeps only the ticked scopes that exist in the
+   catalog, and redirects to `https://<tenant>/continue?state=…&session_token=…` with a signed
+   return token carrying the chosen `scopes`, the `agent` wallet address, and the `state` Auth0 checks.
+4. **On continue** the Action validates that return token (`api.redirect.validateToken`) and writes
+   both the chosen scopes **and** the agent wallet address into custom claims.
+
+The Action needs two **Secrets**: `CONSENT_SECRET` (a random string, HS256, **must equal the
+Worker's `CONSENT_SECRET`**) and `CONSENT_URL` (`https://<worker-host>/consent`). Add the Action to
+the **Login** flow. See the file header for the step-by-step.
+
+> **Agent wallet is prototype scaffolding (PAK-550 direction).** The `agoric1…` keypair is generated
+> fresh and its private key is **not persisted** (discarded after render), so today it's identity-
+> display only - the agent can't sign or act. Real custody (persist + encrypt the key) and an on-chain
+> delegation step are deliberately out of scope here. The address is carried through a hidden form
+> field, so the `agent` claim isn't yet authoritative (a real build makes the server the source of
+> truth). See PAK-550.
 
 ### Why a custom claim, not `addScope()`
 
 Auth0 **silently ignores** `api.accessToken.addScope()` for third-party (DCR) apps - i.e. every MCP
 client. (The tenant log literally says _"these scopes were ignored."_) Custom claims are **never**
-filtered, so we use one:
+filtered, so the Action writes the selected scopes into one:
 
 ```js
-// Auth0 Action - Login flow - "post-login-scopes"
-exports.onExecutePostLogin = async (event, api) => {
-  api.accessToken.setCustomClaim('https://ymax.app/scopes', [
-    'portfolio:positions',
-    'portfolio:allocation',
-  ]);
-};
+// auth0-actions/capability-consent.js — onContinuePostLogin (abridged)
+const payload = api.redirect.validateToken({
+  secret: event.secrets.CONSENT_SECRET,
+  tokenParameterName: 'session_token',
+});
+api.accessToken.setCustomClaim('https://ymax.app/scopes', payload.scopes ?? []);
+api.accessToken.setCustomClaim('https://ymax.app/agent', payload.agent); // the agent wallet
 ```
 
-- The namespace **must be a valid URL** (`https://ymax.app/scopes`). A bare `https://ymax/scopes` is silently dropped (invalid host).
-- Add the Action to the **Login** flow.
-- The MCP server's verifier merges this claim into the token's scope list (see below).
+- The namespace **must be a valid URL** (`https://ymax.app/scopes`, `https://ymax.app/agent`). A bare `https://ymax/scopes` is silently dropped (invalid host).
+- The MCP server's verifier merges the scopes claim into the token's scope list and reads the agent
+  claim into `authInfo.extra.agent` (see below).
+- `CONSENT_SECRET` is a **real secret** - set it with `wrangler secret put CONSENT_SECRET` (and in
+  `.dev.vars` for local dev), not in `wrangler.toml`.
 
 ---
 
 ## 7. The MCP server code
-
-Three files do the work:
 
 ### `src/auth.ts` - token verification + resource metadata
 
@@ -172,8 +203,21 @@ Three files do the work:
   - `scope` - space-delimited standard OAuth scopes
   - `permissions` - array, from Auth0 RBAC
   - `https://ymax.app/scopes` - the namespaced custom claim from the Action (reliable for DCR apps)
+- Reads the `https://ymax.app/agent` claim into `authInfo.extra.agent` - the agent wallet a tool would
+  use as the Agoric identity acting on the portfolio.
 - Serves `/.well-known/oauth-protected-resource/mcp` (RFC 9728) naming Auth0 as the authorization
   server, and returns the `requireBearerAuth` middleware that guards `POST /mcp`.
+
+### `src/consent.ts` + `src/scopes.ts` + `src/wallet.ts` - the consent screen (§6)
+
+- `src/scopes.ts` - the selectable-capability catalog (single source of truth): `portfolio:positions`,
+  `portfolio:allocation` (read) and `portfolio:rebalance` (write). The consent page renders it; the
+  submit handler rejects anything not in it.
+- `src/wallet.ts` - `createAgentWallet()` derives a fresh Agoric (`agoric1…`) address (SLIP-44 coin
+  type 564) via `@scure`/`@noble`. **Prototype:** the key is not persisted (see §6 note).
+- `src/consent.ts` - `GET /consent` (verify inbound token → create agent wallet → render checkboxes)
+  and `POST /consent` (validate → sign a return token with the chosen scopes + agent → redirect to
+  Auth0's `/continue`). Both are unauthenticated - they run mid-login, before any token exists.
 
 ### `src/create-server.ts` - the tools + authorization
 
@@ -189,6 +233,10 @@ Three files do the work:
   | ---------------- | ---------------------- | -------------------------------- |
   | `get_positions`  | `portfolio:positions`  | positions, balances, total value |
   | `get_allocation` | `portfolio:allocation` | target allocation                |
+
+  The `portfolio:rebalance` (write) scope is **selectable on the consent screen and carried in the
+  token, but has no tool yet** - exercising it needs a write tool plus the agent-wallet custody +
+  on-chain delegation that are out of scope here (PAK-550).
 
 ### `src/worker.ts` - the Cloudflare Workers host (Hono + `@hono/mcp`)
 
@@ -239,14 +287,17 @@ this README) so they live in `wrangler.toml` under `vars`, not as Wrangler secre
 
 ## 9. Environment variables
 
-Only three - the MCP server is a pure resource server. They're set as Wrangler `vars` in
-`wrangler.toml`:
+Three non-secret `vars` (in `wrangler.toml`) plus one secret:
 
 | Var              | Value (this deployment)    | Purpose                                                  |
 | ---------------- | -------------------------- | -------------------------------------------------------- |
 | `AUTH0_DOMAIN`   | `rabi-mcp.us.auth0.com`    | derives issuer + OIDC discovery + JWKS                   |
 | `AUTH0_AUDIENCE` | `https://<worker-url>/mcp` | expected `aud` - **must equal the Auth0 API identifier** |
 | `MCP_SERVER_URL` | `https://<worker-url>/mcp` | this server's public URL; drives the PRM document        |
+
+| Secret           | Purpose                                                                                                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CONSENT_SECRET` | HS256 secret for the `/consent` page (§6). **Must equal the Auth0 Action's `CONSENT_SECRET`.** Set via `wrangler secret put CONSENT_SECRET`; use `.dev.vars` locally. Only needed for capability selection - the resource-server core works without it. |
 
 `AUTH0_AUDIENCE` and `MCP_SERVER_URL` **must both point at this deployment's domain**, and
 `AUTH0_AUDIENCE` must match the Auth0 API identifier exactly - otherwise every token's `aud` fails
@@ -294,9 +345,18 @@ sequenceDiagram
     S-->>A: redirect ?code=...
     A->>S: POST /token + GET /userinfo (server-to-server, no Cloudflare)
     S-->>A: { sub: "eip155:1:0xABC..." }
+
+    Note over U,M: - Consent screen (Redirect Action) -
+    A->>M: redirect browser to /consent (?session_token, ?state)
+    M->>M: create Agoric agent wallet (agoric1..., key not persisted)
+    M->>U: show agent wallet + capability checkboxes
+    U-->>M: tick scopes + Authorize
+    M-->>A: redirect /continue (?state, signed {scopes, agent})
+    A->>A: Action writes ymax.app/scopes + ymax.app/agent claims
+
     A-->>C: redirect ?code=... → then token exchange
     C->>A: POST /oauth/token (code + code_verifier)
-    A-->>C: access_token (JWT, sub = wallet, scopes via Action claim)
+    A-->>C: access_token (JWT: sub = wallet, scopes = selection, agent = agoric1...)
 
     Note over C,Y: - Authenticated tool call -
     C->>M: POST /mcp  tools/call get_positions  Authorization: Bearer JWT

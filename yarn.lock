@@ -576,6 +576,22 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@noble/curves@npm:2.2.0":
+  version: 2.2.0
+  resolution: "@noble/curves@npm:2.2.0"
+  dependencies:
+    "@noble/hashes": "npm:2.2.0"
+  checksum: 10c0/e545d3bb03ebedd5c04c2cab81342d64f5ce8a4c1019cfe207f3dc69174bc0ad7cfb50effc31bfa8616b8340900f445dd053da7454190428857c4eedd3b51413
+  languageName: node
+  linkType: hard
+
+"@noble/hashes@npm:2.2.0, @noble/hashes@npm:^2.2.0":
+  version: 2.2.0
+  resolution: "@noble/hashes@npm:2.2.0"
+  checksum: 10c0/cad8630c504d6b9271984f685cd0af9101b40988fc2dfbe17ccdf068a9941f95cc5c9957d89e9ca4b7ca94c15cb35f93510c5d53a09fbcc83ee503b93d0a1034
+  languageName: node
+  linkType: hard
+
 "@poppinss/colors@npm:^4.1.5":
   version: 4.1.6
   resolution: "@poppinss/colors@npm:4.1.6"
@@ -600,6 +616,34 @@ __metadata:
   version: 1.2.3
   resolution: "@poppinss/exception@npm:1.2.3"
   checksum: 10c0/44e48400c9f2d33a4904bee99321b89239774bb9210049f1c55864725fd524ff55bc78a5a94a13d5edea93b84e13023c229c88ebba8c2dc717fb4b2205e42ac7
+  languageName: node
+  linkType: hard
+
+"@scure/base@npm:2.2.0, @scure/base@npm:^2.2.0":
+  version: 2.2.0
+  resolution: "@scure/base@npm:2.2.0"
+  checksum: 10c0/30158ccf5da86b0f06928f1cfe24a29fbea22824adf6f8895222910cade1ad4fe7593958aacf563287e6b4c55746f47395178e7a4763b059c22d6ee8e6f76387
+  languageName: node
+  linkType: hard
+
+"@scure/bip32@npm:^2.2.0":
+  version: 2.2.0
+  resolution: "@scure/bip32@npm:2.2.0"
+  dependencies:
+    "@noble/curves": "npm:2.2.0"
+    "@noble/hashes": "npm:2.2.0"
+    "@scure/base": "npm:2.2.0"
+  checksum: 10c0/1c71466ea3383657f58120427974c8e83ab1556b17df41e0b139e9b93998c7513f04bf54858fdc493074f0a2e6b7be07eb94715173f8c36932b7cada8ebed60d
+  languageName: node
+  linkType: hard
+
+"@scure/bip39@npm:^2.2.0":
+  version: 2.2.0
+  resolution: "@scure/bip39@npm:2.2.0"
+  dependencies:
+    "@noble/hashes": "npm:2.2.0"
+    "@scure/base": "npm:2.2.0"
+  checksum: 10c0/932caf62a0eebf64a07801fcf735309b96a68f1605ecabed8d4b1a6533945180bea2e0f19eff49d95e206e68b7c55cca536a700f7593d758a2c824df299fceda
   languageName: node
   linkType: hard
 
@@ -689,6 +733,10 @@ __metadata:
   dependencies:
     "@hono/mcp": "npm:^0.2.0"
     "@modelcontextprotocol/sdk": "npm:^1.29.0"
+    "@noble/hashes": "npm:^2.2.0"
+    "@scure/base": "npm:^2.2.0"
+    "@scure/bip32": "npm:^2.2.0"
+    "@scure/bip39": "npm:^2.2.0"
     "@types/node": "npm:^22.10.1"
     dotenv: "npm:^16.4.7"
     hono: "npm:^4.6.0"

@@ -18,6 +18,10 @@
   "dependencies": {
     "@hono/mcp": "^0.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@noble/hashes": "^2.2.0",
+    "@scure/base": "^2.2.0",
+    "@scure/bip32": "^2.2.0",
+    "@scure/bip39": "^2.2.0",
     "dotenv": "^16.4.7",
     "hono": "^4.6.0",
     "hono-rate-limiter": "^0.4.2",

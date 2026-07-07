@@ -66,12 +66,14 @@ Auth0 delegates login to a **Sign-In with Ethereum** OIDC connection. The user s
 
 Two independent gates, both required per tool:
 
-1. **Scope** - the token must carry the tool's scope (i.e. `portfolio:positions`, `portfolio:allocation`).
+1. **Scope** - the token must carry the tool's scope (i.e. `portfolio:positions`, `portfolio:allocation`; `portfolio:rebalance` for the write path).
 2. **Portfolio ownership** - extract the `0x…` address from the token `sub`, then `GET https://main1.ymax.app/portfolios/by-wallet/{addr}`: **200** → authorized (returns the portfolio to scope to); **404** → `Forbidden: no Ymax portfolio`; no address → `Forbidden: no wallet identity`.
 
 Ownership is verified against Ymax **out-of-band on every call**, not trusted from a claim - the token proves _who_, Ymax proves _what they own_.
 
-**Scopes are delivered via a custom claim:** An Auth0 **Action** on the Login flow sets a namespaced claim `https://ymax.app/scopes` (the namespace must be a valid URL; custom claims are never filtered). The RS merges **three** scope sources into one list: `scope` (space-delimited), `permissions` (RBAC array), and `https://ymax.app/scopes` (the reliable one for DCR).
+**Scopes are user-selected on a consent screen and delivered via a custom claim:** immediately after wallet login, an Auth0 **Redirect Action** suspends the flow and sends the user to a consent page the RS hosts (`/consent`), which renders a checkbox per capability; the page returns the ticked scopes to Auth0's `/continue`, and the Action writes them into the namespaced claim `https://ymax.app/scopes` (the namespace must be a valid URL; custom claims are never filtered - unlike `addScope()`, which Auth0 silently drops for DCR apps). The RS merges **three** scope sources into one list: `scope` (space-delimited), `permissions` (RBAC array), and `https://ymax.app/scopes` (the reliable one for DCR).
+
+> **PAK-550 scaffolding already in the prototype:** the same consent screen also creates an **agent wallet** (an Agoric `agoric1…` address) to act on the user's behalf and stamps it into a `https://ymax.app/agent` claim, and offers a `portfolio:rebalance` write scope. Today these are **identity/selection only** - the agent key is not persisted and no tool consumes the write scope. Turning them into real capability (key custody + on-chain delegation + write tools) is PAK-550 (§5).
 
 ### 4.3 Token verification (the RS security core)
 
@@ -104,7 +106,12 @@ sequenceDiagram
     S->>U: SIWE page → connect + sign
     U-->>S: signed ERC-4361 message
     S-->>A: OIDC profile (sub = 0xWallet)
-    A-->>C: code → token (JWT: sub=wallet, scopes via Action claim)
+    A->>M: redirect to /consent (Redirect Action)
+    M->>M: create Agoric agent wallet (key not persisted)
+    M->>U: show agent wallet + capability checkboxes
+    U-->>M: tick scopes + Authorize
+    M-->>A: /continue (signed {scopes, agent})
+    A-->>C: code → token (JWT: sub=wallet, scopes=selection, agent=agoric1…)
     C->>M: POST /mcp tools/call get_positions (Bearer JWT)
     M->>M: jwtVerify (sig + iss + aud + exp)
     M->>M: requireScope(portfolio:positions)

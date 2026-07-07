@@ -13,6 +13,7 @@ import {
   type Env,
   type VerifyAccessToken,
 } from './auth.js';
+import { consentPage, consentSubmit } from './consent.js';
 import { log } from './log.js';
 
 /**
@@ -110,6 +111,12 @@ const buildApp = (
   app.get('/.well-known/oauth-authorization-server', (c) =>
     c.json(oauthMetadata),
   );
+
+  // Capability-selection consent page — a step in Auth0's *login* flow, not the resource server.
+  // Auth0's Redirect Action sends the user here after wallet sign-in to pick scopes; unauthenticated
+  // by design (no token exists yet). See src/consent.ts + auth0-actions/capability-consent.js.
+  app.get('/consent', consentPage);
+  app.post('/consent', consentSubmit);
 
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(
     config.resourceServerUrl,
