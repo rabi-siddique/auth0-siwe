@@ -1,6 +1,6 @@
 # Design: AuthN / AuthZ for MCP servers
 
-**Status:** Draft · **Ticket:** [PAK-552](https://linear.app/agoric/issue/PAK-552) · **Parent:** [PAK-550](https://linear.app/agoric/issue/PAK-550) · **Author:** Rabi Siddique · **Last updated:** 2026-07-07
+**Ticket:** [PAK-552](https://linear.app/agoric/issue/PAK-552) · **Parent:** [PAK-550](https://linear.app/agoric/issue/PAK-550) · **Author:** Rabi Siddique
 
 ---
 
@@ -71,9 +71,7 @@ Two independent gates, both required per tool:
 
 Ownership is verified against Ymax **out-of-band on every call**, not trusted from a claim - the token proves _who_, Ymax proves _what they own_.
 
-**Scopes are user-selected on a consent screen and delivered via a custom claim:** immediately after wallet login, an Auth0 **Redirect Action** suspends the flow and sends the user to a consent page the RS hosts (`/consent`), which renders a checkbox per capability; the page returns the ticked scopes to Auth0's `/continue`, and the Action writes them into the namespaced claim `https://ymax.app/scopes` (the namespace must be a valid URL; custom claims are never filtered - unlike `addScope()`, which Auth0 silently drops for DCR apps). The RS merges **three** scope sources into one list: `scope` (space-delimited), `permissions` (RBAC array), and `https://ymax.app/scopes` (the reliable one for DCR).
-
-> **PAK-550 scaffolding already in the prototype:** the same consent screen also creates an **agent wallet** (an Agoric `agoric1…` address) to act on the user's behalf and stamps it into a `https://ymax.app/agent` claim, and offers a `portfolio:rebalance` write scope. Today these are **identity/selection only** - the agent key is not persisted and no tool consumes the write scope. Turning them into real capability (key custody + on-chain delegation + write tools) is PAK-550 (§5).
+**Scopes are user-selected on a consent screen and delivered via a custom claim:** immediately after wallet login, an Auth0 **Redirect Action** suspends the flow and sends the user to a consent page the RS hosts (`/consent`), which renders a checkbox per capability; the page returns the ticked scopes to Auth0's `/continue`, and the Action writes them into the namespaced claim `https://ymax.app/scopes`.
 
 ### 4.3 Token verification (the RS security core)
 
@@ -95,23 +93,32 @@ sequenceDiagram
     participant S as siwe-oidc
     participant Y as Ymax API
 
+    Note over C,M: - Discovery (RFC 9728) -
     C->>M: POST /mcp (no token)
     M-->>C: 401 + WWW-Authenticate: resource_metadata=...
     C->>M: GET /.well-known/oauth-protected-resource/mcp
     M-->>C: { authorization_servers: [Auth0] }
     C->>A: GET /.well-known/openid-configuration
+
+    Note over C,A: - Dynamic Client Registration -
     C->>A: POST /oidc/register (DCR)
+
+    Note over U,S: - Wallet login (SIWE) -
     C->>A: GET /authorize (PKCE S256, resource=.../mcp)
     A->>S: redirect to SIWE connection
     S->>U: SIWE page → connect + sign
     U-->>S: signed ERC-4361 message
     S-->>A: OIDC profile (sub = 0xWallet)
+
+    Note over U,M: - Consent screen (Redirect Action) -
     A->>M: redirect to /consent (Redirect Action)
     M->>M: create Agoric agent wallet (key not persisted)
     M->>U: show agent wallet + capability checkboxes
     U-->>M: tick scopes + Authorize
     M-->>A: /continue (signed {scopes, agent})
     A-->>C: code → token (JWT: sub=wallet, scopes=selection, agent=agoric1…)
+
+    Note over C,Y: - Authenticated tool call -
     C->>M: POST /mcp tools/call get_positions (Bearer JWT)
     M->>M: jwtVerify (sig + iss + aud + exp)
     M->>M: requireScope(portfolio:positions)
@@ -124,25 +131,61 @@ sequenceDiagram
     end
 ```
 
-## 5. Recommendation & next steps
+## 5. Why Auth0
 
-**Adopt Path A: Auth0 as the OAuth authorization server, with a self-hosted `siwe-oidc` as the SIWE→OIDC bridge.** It avoids building and operating a security-critical OAuth authorization server ourselves (§3). Fall back to Path B only if this proves untenable.
+The architecture above (§4) leans on Auth0 for the entire OAuth authorization-server role. This is deliberate: MCP requires a standards-compliant OAuth 2.1 **authorization server** (§2.1), and Auth0 already provides that securely as a mature, audited product. Letting Auth0 own the OAuth layer frees us to spend our effort on the parts that are actually ours - wallet authentication (SIWE) and portfolio authorization - instead of building, securing, and maintaining security-critical OAuth infrastructure.
+
+What Auth0 gives us, so we don't have to build and own it:
+
+- **Dynamic Client Registration (DCR)** - MCP clients like ChatGPT register themselves automatically, with no manual provisioning.
+- **The OAuth 2.1 Authorization Code + PKCE flow** - ensuring an access token is only issued to the client that initiated the authorization request.
+- **OIDC / OAuth discovery endpoints** - so MCP clients can find our authorization, token, and registration endpoints.
+- **Access-token issuance and RS256 JWT signing.**
+- **JWKS publishing and signing-key rotation.**
+- **OAuth client management**, and secure handling of **authorization codes, refresh tokens, and token lifecycles**.
+
+The alternative is to build our own authorization server (e.g. Auth.js + `siwe`). But that means _owning_ a security-critical OAuth implementation: `/authorize`, `/token`, DCR, discovery metadata, JWT signing, JWKS, key rotation, and client/code storage - the entire list above. That is a large amount of security-sensitive infrastructure Auth0 already provides; §3 weighs that trade in full.
+
+## 6. Auth0 tenancy, DCR, and entity limits
+
+A few Auth0 concepts and operational limits shape how this design behaves at scale.
+
+**What is a tenant?** A tenant is the top-level container for everything in Auth0 - a grouping of your applications (plus connections, users, and settings) under one logical account. Every limit and default described below applies **per tenant**.
+
+**What is Dynamic Client Registration (DCR)?** DCR is a feature based on the [OpenID Connect Dynamic Client Registration spec](https://auth0.com/docs/get-started/applications/dynamic-client-registration) that lets applications register themselves as OAuth/OIDC clients with our tenant **programmatically**, without us manually creating them in the Auth0 dashboard first. It's what makes MCP clients like ChatGPT work out of the box: on first connect the client self-registers at the `/oidc/register` endpoint and gets back a `client_id`.
+
+**Is there a cap on how many clients DCR can create?** Yes - a per-tenant limit on total applications. Hit it and registration starts returning:
+
+```
+Error creating connector
+Dynamic client registration failed: registration endpoint returned 403
+(Forbidden: You reached the limit of entities of this type for this tenant.)
+```
+
+The Enterprise plan allows up to **100,000 applications per tenant** ([entity-limit policy](https://auth0.com/docs/troubleshoot/customer-support/operational-policies/entity-limit-policy#subscription-plan)). If we ever approach that limit, we can work with Auth0 Support to raise it for our use case.
+
+**Why this is a standing concern.** Each user - and each reconnect - mints a fresh DCR client, and DCR clients are never garbage-collected on their own, so the count only grows toward the cap. The mitigation is to **prune inactive clients on a regular schedule** (delete clients with no recent token activity via the Management API) and/or move to **authenticated DCR** so registration isn't open-ended. Given the 100k headroom this isn't a launch blocker, but it's tracked as an availability follow-on in §7.
+
+## 7. Recommendation & next steps
+
+**Adopt Path A: Auth0 as the OAuth authorization server, with a self-hosted `siwe-oidc` as the SIWE→OIDC bridge.** It avoids building and operating a security-critical OAuth authorization server ourselves (§3, §5). Fall back to Path B only if this proves untenable.
 
 Because upstream `siwe-oidc` is stale (v0.1.0, ~2yr) and unaudited, we **fork/vendor** it rather than depend on upstream - pinning a copy, keeping our fixes (e.g. the WalletConnect `PROJECT_ID` baked into the frontend), and commissioning a security review. This is contingent on the pending SpruceID maintenance answer, which could still flip the call to _keep_ (depend on upstream) or _replace_ (build the bridge ourselves); current signals point to fork.
 
 > **The audit gap is path-independent.** By SpruceID's own disclaimers, neither `siwe-oidc` nor the underlying SIWE reference libraries (the Rust `siwe` crate _and_ the TypeScript [`siwe`](https://github.com/spruceid/siwe) library) have had a formal security audit. So rebuilding the bridge ourselves in TS (the _replace_ option) is safer on **maintenance**, not on **audit** - it inherits the same unaudited SIWE-verification core. A security review of the SIWE-verification path (signature + nonce/domain/timestamp validation) is required **whichever** option we choose. This is also an argument to keep the SIWE surface we own as small as possible and lean on Auth0 (an audited, commercial AS) for everything else.
 
-**Blockers before any non-prototype use:**
+**Follow-ups:**
 
-1. **DCR sprawl (availability).** Each user/reconnect mints a new Auth0 client that is never garbage-collected, so the per-tenant client cap eventually locks out new users. Move to authenticated DCR and/or client expiry.
-2. **SIWE-verification security review.** Review the SIWE-verification path (in the forked `siwe-oidc`, or our own bridge) - unaudited in every option, so this is required regardless of keep/fork/replace.
+1. **SIWE-verification security review.** Review the SIWE-verification path (in the forked `siwe-oidc`, or our own bridge) - unaudited in every option, so this is required regardless of keep/fork/replace.
+2. **DCR client hygiene (availability at scale).** Each user/reconnect mints a new Auth0 client that is never garbage-collected. The 100,000-app per-tenant cap (§6) is ample headroom for early use - so this is _not_ a launch blocker - but before real scale we need a cleanup plan: prune inactive clients on a schedule and/or move to authenticated DCR.
 
-**Follow-on:**
+3. **Register the agent on-chain (make the `agent` claim authoritative).** To let the agent act on the portfolio, the user must **sign a transaction registering the agent with the Ymax portfolio contract** (the on-chain delegation), and the RS must persist and custody the agent key - turning `https://ymax.app/agent` (§4.2) into a real capability rather than a display value.
 
-3. Close the SpruceID verification and record the keep/fork/replace decision.
-4. Hand this authN/authZ foundation to **PAK-550** for the delegation / write / multi-agent design.
+4. **Multi-agent: access-token handling.** Explore the path where one user runs **more than one agent** (e.g. one per harness, or one per task). Open questions: is it one token carrying a single `agent` claim per login (so N agents ⇒ N logins/tokens), or one token enumerating multiple agents? How does the RS map an incoming token to the correct on-chain agent identity, and how are per-agent scopes, registration, and revocation handled independently?
 
-## 6. References
+5. Hand this authN/authZ foundation to **PAK-550** for the delegation / write / multi-agent design.
+
+## 8. References
 
 - [PAK-552](https://linear.app/agoric/issue/PAK-552)
 - Prototype: this repo (`src/auth.ts`, `src/create-server.ts`, `src/worker.ts`); companion `siwe-oidc/`
