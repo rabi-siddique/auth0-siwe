@@ -19,11 +19,10 @@ import { log } from './log.js';
 /**
  * Cloudflare Workers host for the portfolio MCP server (Hono + @hono/mcp).
  *
- * This is the resource-server half of the OAuth setup: it validates Auth0-issued JWTs and gates the
- * tools. Auth0 still does DCR, login (via the self-hosted SIWE connection) and token issuance.
+ * This is the resource-server half of the OAuth setup: it validates Keycloak-issued JWTs and gates
+ * the tools. Keycloak does DCR, login (via the self-hosted SIWE identity provider) and token issuance.
  *
- * The Express host was replaced by this; the token-verification core lives in `auth.ts` and is
- * runtime-agnostic (jose = Web Crypto), so nothing about the auth behaviour changed.
+ * The token-verification core lives in `auth.ts` and is runtime-agnostic (jose = Web Crypto).
  */
 
 type Vars = { auth: AuthInfo }; // @hono/mcp's transport reads the AuthInfo from `c.get('auth')`.
@@ -74,8 +73,8 @@ const bearerAuth = (
   };
 };
 
-// The RFC 9728 "breadcrumb" naming Auth0 as this resource's authorization server. Served at both the
-// resource-suffixed path (what our WWW-Authenticate points at) and the bare path some clients probe.
+// The RFC 9728 "breadcrumb" naming Keycloak as this resource's authorization server. Served at both
+// the resource-suffixed path (what our WWW-Authenticate points at) and the bare path some clients probe.
 const protectedResourceMetadata = (config: AuthConfig) => ({
   resource: config.resourceServerUrl.href,
   authorization_servers: [config.issuer],
@@ -107,14 +106,16 @@ const buildApp = (
   const prm = protectedResourceMetadata(config);
   app.get('/.well-known/oauth-protected-resource', (c) => c.json(prm));
   app.get('/.well-known/oauth-protected-resource/mcp', (c) => c.json(prm));
-  // Mirror Auth0's authorization-server metadata for clients that fetch it from the resource origin.
+  // Mirror the authorization-server metadata for clients that fetch it from the resource origin.
+  // (Keycloak serves it only under the realm path, so re-advertising it here helps clients that
+  // probe the RS origin directly.)
   app.get('/.well-known/oauth-authorization-server', (c) =>
     c.json(oauthMetadata),
   );
 
-  // Capability-selection consent page — a step in Auth0's *login* flow, not the resource server.
-  // Auth0's Redirect Action sends the user here after wallet sign-in to pick scopes; unauthenticated
-  // by design (no token exists yet). See src/consent.ts + auth0-actions/capability-consent.js.
+  // Capability-selection consent page — a step in Keycloak's *login* flow, not the resource server.
+  // The consent-redirect authenticator sends the user here after wallet sign-in to pick scopes;
+  // unauthenticated by design (no token exists yet). See src/consent.ts + keycloak/authenticator/.
   app.get('/consent', consentPage);
   app.post('/consent', consentSubmit);
 
@@ -159,7 +160,7 @@ const buildApp = (
   return app;
 };
 
-// Per-isolate memoised setup: read config, fetch Auth0 discovery once, build the verifier + app.
+// Per-isolate memoised setup: read config, fetch Keycloak discovery once, build the verifier + app.
 // Env is stable across requests within an isolate, so we build this lazily on the first request.
 let setup: Promise<ReturnType<typeof buildApp>> | undefined;
 
@@ -168,10 +169,17 @@ const getApp = (env: Env) => {
     setup = (async () => {
       const config = readConfig(env);
       const oauthMetadata = await fetchOAuthMetadata(config.issuer);
-      const verify = makeVerifier(config);
+      // Keycloak serves signing keys at `.../protocol/openid-connect/certs`; read it from discovery
+      // (`jwks_uri`) rather than hardcode a path.
+      const jwksUri = oauthMetadata.jwks_uri;
+      if (typeof jwksUri !== 'string' || !jwksUri) {
+        throw new Error('Keycloak OIDC metadata is missing jwks_uri.');
+      }
+      const verify = makeVerifier(config, jwksUri);
       log('auth: OAuth configured —', {
         issuer: config.issuer,
         audience: config.audience,
+        jwksUri,
         protecting: '/mcp',
       });
       return buildApp(config, oauthMetadata, verify);

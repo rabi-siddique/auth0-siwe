@@ -8,18 +8,26 @@ import { log } from './log.js';
 /**
  * Capability-selection consent page (the "authorization screen with checkboxes").
  *
- * This is NOT part of the resource-server core — it's a step in Auth0's *login* flow. An Auth0
- * Redirect Action (see `auth0-actions/capability-consent.js`) suspends login right after the user
- * signs in with their wallet and sends them here to pick which portfolio capabilities to grant. We
- * render checkboxes, and on submit hand the chosen scopes back to Auth0, which writes them into the
- * token's `https://ymax.app/scopes` claim.
+ * This is NOT part of the resource-server core — it's a step in Keycloak's *login* flow. A custom
+ * Keycloak Authenticator (see `keycloak/authenticator/`) suspends login right after the user signs
+ * in with their wallet (brokered through the siwe-oidc identity provider) and redirects them here to
+ * pick which portfolio capabilities to grant. We render checkboxes, and on submit redirect back to
+ * the Keycloak action URL the authenticator handed us, carrying the chosen scopes so the authenticator
+ * can write them onto the user (a User Attribute mapper then projects them into the token).
  *
- * Trust model — the Action and this page share a symmetric secret (`CONSENT_SECRET`, HS256):
- *  - inbound  `session_token` (minted by `api.redirect.encodeToken`) proves the request is part of a
- *    real, in-flight Auth0 login — we verify its signature + expiry before rendering or accepting.
- *  - outbound `session_token` (minted here) proves to Auth0 that the selection came from this page;
- *    it carries the chosen `scopes` and the `state` Auth0 checks against the /continue request.
+ * Trust model — the authenticator and this page share a symmetric secret (`CONSENT_SECRET`, HS256):
+ *  - inbound  `session_token` (minted by the authenticator) proves the request is part of a real,
+ *    in-flight Keycloak login — we verify its signature + expiry before rendering or accepting.
+ *  - outbound `session_token` (minted here) proves to the authenticator that the selection came from
+ *    this page; it carries the chosen `scopes`, the `agent` wallet, and the `state` the authenticator
+ *    checks against its auth-session note.
+ *  - `redirect_uri` is the Keycloak `login-actions/authenticate` URL that re-enters the authenticator;
+ *    we validate it against the configured Keycloak issuer origin to prevent an open redirect.
  * Neither token grants anything on its own — the user can only ever scope down their own login.
+ *
+ * NOTE: `CONSENT_SECRET` must be at least 32 bytes. The Keycloak side signs/verifies with Nimbus
+ * (com.nimbusds), which rejects HS256 keys shorter than 256 bits; `jose` here would accept a shorter
+ * one, so the 32-byte floor is what keeps both sides interoperable.
  */
 
 const encoder = new TextEncoder();
@@ -27,7 +35,7 @@ const RETURN_TOKEN_TTL = '5m';
 
 const secretKey = (secret: string) => encoder.encode(secret);
 
-// Verify the token Auth0's Redirect Action minted. jwtVerify checks HS256 signature + expiry.
+// Verify the token the Keycloak authenticator minted. jwtVerify checks HS256 signature + expiry.
 const verifyInbound = (token: string, secret: string) =>
   jwtVerify(token, secretKey(secret)).then(({ payload }) => payload);
 
@@ -39,17 +47,27 @@ const escapeHtml = (value: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-// The `sub` on the inbound token is the Auth0 user_id; for SIWE users it embeds the wallet address.
+// The `sub` on the inbound token is the Keycloak user_id; for SIWE users it embeds the wallet address.
 const walletFromSub = (sub: string) =>
   sub.match(/0x[a-fA-F0-9]{40}/)?.[0] ?? sub;
+
+// Guard against an open redirect: the return URL must live on the Keycloak issuer's origin.
+const isTrustedRedirect = (redirectUri: string, issuer: string) => {
+  try {
+    return new URL(redirectUri).origin === new URL(issuer).origin;
+  } catch {
+    return false;
+  }
+};
 
 const renderConsent = (params: {
   token: string;
   state: string;
+  redirectUri: string;
   address: string;
   agentAddress: string;
 }) => {
-  const { token, state, address, agentAddress } = params;
+  const { token, state, redirectUri, address, agentAddress } = params;
   const checkboxes = AVAILABLE_SCOPES.map(
     (s) => `
         <label class="scope">
@@ -127,6 +145,7 @@ const renderConsent = (params: {
     </div>
     <input type="hidden" name="session_token" value="${escapeHtml(token)}" />
     <input type="hidden" name="state" value="${escapeHtml(state)}" />
+    <input type="hidden" name="redirect_uri" value="${escapeHtml(redirectUri)}" />
     <input type="hidden" name="agent" value="${escapeHtml(agentAddress)}" />
     <div class="scopes">${checkboxes}</div>
     <div class="actions">
@@ -138,16 +157,25 @@ const renderConsent = (params: {
 </html>`;
 };
 
-// GET /consent — Auth0 redirects the user here mid-login with `?session_token=<jwt>&state=<state>`.
+// GET /consent — Keycloak redirects the user here mid-login with
+// `?session_token=<jwt>&state=<state>&redirect_uri=<login-actions URL>`.
 export const consentPage = async (c: Context<{ Bindings: Env }>) => {
   const secret = c.env.CONSENT_SECRET;
-  if (!secret) {
-    log('consent: CONSENT_SECRET not configured');
-    return c.text('Consent not configured (missing CONSENT_SECRET).', 500);
+  const issuer = c.env.KEYCLOAK_ISSUER;
+  if (!secret || !issuer) {
+    log('consent: CONSENT_SECRET or KEYCLOAK_ISSUER not configured');
+    return c.text('Consent not configured.', 500);
   }
   const token = c.req.query('session_token') ?? '';
   const state = c.req.query('state') ?? '';
-  if (!token || !state) return c.text('Missing session_token or state.', 400);
+  const redirectUri = c.req.query('redirect_uri') ?? '';
+  if (!token || !state || !redirectUri) {
+    return c.text('Missing session_token, state, or redirect_uri.', 400);
+  }
+  if (!isTrustedRedirect(redirectUri, issuer)) {
+    log('consent: untrusted redirect_uri —', redirectUri);
+    return c.text('Untrusted redirect_uri.', 400);
+  }
 
   let payload;
   try {
@@ -160,30 +188,49 @@ export const consentPage = async (c: Context<{ Bindings: Env }>) => {
   const address = walletFromSub(String(payload.sub ?? ''));
   // PAK-550: create the agent wallet that would act on the user's behalf, then show it on the
   // consent screen. Prototype — the key is not persisted (see src/wallet.ts).
+  //
+  // Extension point (PAK-550 multi-agent): instead of minting one fresh wallet, fetch the user's
+  // existing agents here (keyed by `payload.sub`) and let them authorize per-agent. The plumbing —
+  // inbound `sub`, per-capability checkboxes, signed return token — already supports carrying that
+  // richer selection; only this render + the POST aggregation would grow.
   const agent = createAgentWallet();
   log('consent: agent wallet created —', {
     sub: payload.sub,
     agent: agent.address,
   });
   return c.html(
-    renderConsent({ token, state, address, agentAddress: agent.address }),
+    renderConsent({
+      token,
+      state,
+      redirectUri,
+      address,
+      agentAddress: agent.address,
+    }),
   );
 };
 
-// POST /consent — the user's selection. Validate, then hand the chosen scopes back to Auth0's
-// /continue endpoint via a signed return token that carries `state` (Auth0 checks it) + `scopes`.
+// POST /consent — the user's selection. Validate, then hand the chosen scopes back to Keycloak's
+// login-actions URL via a signed return token that carries `state` (the authenticator checks it) +
+// `scopes` + `agent`.
 export const consentSubmit = async (c: Context<{ Bindings: Env }>) => {
   const secret = c.env.CONSENT_SECRET;
-  const domain = c.env.AUTH0_DOMAIN;
-  if (!secret || !domain) {
-    log('consent: CONSENT_SECRET or AUTH0_DOMAIN not configured');
+  const issuer = c.env.KEYCLOAK_ISSUER;
+  if (!secret || !issuer) {
+    log('consent: CONSENT_SECRET or KEYCLOAK_ISSUER not configured');
     return c.text('Consent not configured.', 500);
   }
   // `all: true` so a repeated checkbox name (`scope`) parses to an array rather than the last value.
   const form = await c.req.parseBody({ all: true });
   const token = String(form.session_token ?? '');
   const state = String(form.state ?? '');
-  if (!token || !state) return c.text('Missing session_token or state.', 400);
+  const redirectUri = String(form.redirect_uri ?? '');
+  if (!token || !state || !redirectUri) {
+    return c.text('Missing session_token, state, or redirect_uri.', 400);
+  }
+  if (!isTrustedRedirect(redirectUri, issuer)) {
+    log('consent: untrusted redirect_uri on submit —', redirectUri);
+    return c.text('Untrusted redirect_uri.', 400);
+  }
 
   let payload;
   try {
@@ -200,16 +247,13 @@ export const consentSubmit = async (c: Context<{ Bindings: Env }>) => {
   const scopes = [...new Set(selected)].filter((s) =>
     AVAILABLE_SCOPE_SET.has(s),
   );
-  // The agent wallet shown on the consent page (carried in a hidden field) — passed back so Auth0
-  // can stamp it into the access token as the `https://ymax.app/agent` claim.
+  // The agent wallet shown on the consent page (carried in a hidden field) — passed back so the
+  // authenticator can stamp it as the `ymax_agent` user attribute → `https://ymax.app/agent` claim.
   const agent = String(form.agent ?? '');
 
-  // Auth0's api.redirect.validateToken is picky about the return token:
-  //  - the protected header MUST include `typ: 'JWT'` — jose omits it by default, and Auth0 rejects a
-  //    token without it as "Unexpected token payload type".
-  //  - it must carry the standard claims `sub` (the Auth0 user_id, echoed from the inbound token),
-  //    `iss` (the app targeted by the redirect, i.e. this consent endpoint), `exp`, and `state`
-  //    (Auth0 checks it against the /continue state to block replay).
+  // The return token echoes the standard claims the authenticator checks: `sub` (the Keycloak
+  // user_id, echoed from the inbound token), `state` (matched against the auth-session note to block
+  // replay), `exp`, plus the consent selection (`scopes`, `agent`).
   const reqUrl = new URL(c.req.url);
   const returnToken = await new SignJWT({ scopes, state, agent })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
@@ -219,8 +263,9 @@ export const consentSubmit = async (c: Context<{ Bindings: Env }>) => {
     .setExpirationTime(RETURN_TOKEN_TTL)
     .sign(secretKey(secret));
 
-  const url = new URL(`https://${domain}/continue`);
-  url.searchParams.set('state', state);
+  // Re-enter the Keycloak authenticator: the redirect_uri is its login-actions URL (already carrying
+  // code/execution/tab_id); we append our signed selection as `session_token`.
+  const url = new URL(redirectUri);
   url.searchParams.set('session_token', returnToken);
   log('consent: scopes selected —', { sub: payload.sub, scopes, agent });
   return c.redirect(url.toString(), 302);

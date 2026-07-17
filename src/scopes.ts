@@ -2,8 +2,9 @@
  * The portfolio capabilities a wallet user can grant at login.
  *
  * These are rendered as checkboxes on the consent page (`src/consent.ts`); the subset the user
- * selects is what the Auth0 Redirect Action writes into the token's `https://ymax.app/scopes`
- * claim, which the resource server (`src/auth.ts` + `src/create-server.ts`) then gates each tool on.
+ * selects is what the Keycloak consent-redirect authenticator writes (as user attributes projected
+ * by a mapper) into the token's `https://ymax.app/scopes` claim, which the resource server
+ * (`src/auth.ts` + `src/create-server.ts`) then gates each tool on.
  *
  * This is the single source of truth for the selectable scopes — the consent page renders it and the
  * submit handler validates the user's choice against it (so a tampered form can't inject an unknown

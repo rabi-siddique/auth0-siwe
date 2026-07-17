@@ -14,10 +14,11 @@ enabled = true
 head_sampling_rate = 1
 persist = true
 
-# Non-secret config (all three are already public in the README). After the first `yarn deploy`
-# you'll know the worker's URL — set AUTH0_AUDIENCE + MCP_SERVER_URL to `https://<that-url>/mcp`
-# (AUTH0_AUDIENCE must equal the Auth0 API identifier exactly) and redeploy. See README §8.
+# Non-secret config. After the first `yarn deploy` you'll know the worker's URL — set
+# KEYCLOAK_AUDIENCE + MCP_SERVER_URL to `https://<that-url>/mcp` (KEYCLOAK_AUDIENCE must equal the
+# value the realm's Audience mapper stamps) and redeploy. See README §8.
+# KEYCLOAK_ISSUER is the realm issuer with NO trailing slash, e.g. https://<kc-host>/realms/ymax.
 [vars]
-AUTH0_DOMAIN = "rabi-mcp.us.auth0.com"
-AUTH0_AUDIENCE = "https://auth0-siwe-mcp.rs-first-cf.workers.dev/mcp"
+KEYCLOAK_ISSUER = "https://REPLACE-keycloak-host/realms/ymax"
+KEYCLOAK_AUDIENCE = "https://auth0-siwe-mcp.rs-first-cf.workers.dev/mcp"
 MCP_SERVER_URL = "https://auth0-siwe-mcp.rs-first-cf.workers.dev/mcp"

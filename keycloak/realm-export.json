@@ -1,0 +1,120 @@
+{
+  "realm": "ymax",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "editUsernameAllowed": false,
+  "identityProviders": [
+    {
+      "alias": "siwe-oidc",
+      "displayName": "Sign-In with Ethereum",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "storeToken": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "clientId": "REPLACE-siwe-client-id",
+        "clientSecret": "REPLACE-siwe-client-secret",
+        "clientAuthMethod": "client_secret_post",
+        "authorizationUrl": "https://siwe-oidc-qct6w.sevalla.app/authorize",
+        "tokenUrl": "https://siwe-oidc-qct6w.sevalla.app/token",
+        "userInfoUrl": "https://siwe-oidc-qct6w.sevalla.app/userinfo",
+        "issuer": "https://siwe-oidc-qct6w.sevalla.app/",
+        "jwksUrl": "https://siwe-oidc-qct6w.sevalla.app/jwk",
+        "useJwksUrl": "true",
+        "validateSignature": "true",
+        "defaultScope": "openid",
+        "syncMode": "FORCE",
+        "pkceEnabled": "false"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "wallet-address",
+      "identityProviderAlias": "siwe-oidc",
+      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+      "config": {
+        "syncMode": "FORCE",
+        "claim": "sub",
+        "user.attribute": "wallet_address"
+      }
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "ymax-portfolio",
+      "description": "Ymax portfolio claims: wallet, consent-selected scopes, agent, and MCP audience.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "ymax-wallet",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "wallet_address",
+            "claim.name": "https://ymax\\.app/wallet",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "ymax-scopes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "ymax_scopes",
+            "claim.name": "https://ymax\\.app/scopes",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "ymax-agent",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "ymax_agent",
+            "claim.name": "https://ymax\\.app/agent",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "ymax-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "https://auth0-siwe-mcp.rs-first-cf.workers.dev/mcp",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

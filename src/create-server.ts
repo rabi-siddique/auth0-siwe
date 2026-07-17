@@ -8,7 +8,7 @@ import type {
 import { log } from './log.js';
 
 const TOOL_SCOPES = {
-  // Portfolio scopes — granted to Sign-In-with-Ethereum users at login (via an Auth0 Action).
+  // Portfolio scopes — granted to Sign-In-with-Ethereum users at login (via the consent screen).
   getPositions: 'portfolio:positions',
   getAllocation: 'portfolio:allocation',
 } as const;

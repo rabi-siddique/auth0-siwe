@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>app.ymax</groupId>
+  <artifactId>keycloak-consent-redirect</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <!--
+    Keycloak SPI provider: the consent-redirect authenticator.
+    Build:   mvn -q -f keycloak/authenticator/pom.xml package
+    Output:  keycloak/authenticator/target/keycloak-consent-redirect.jar
+    Deploy:  copy the jar into Keycloak's providers/ (the keycloak/Dockerfile does this).
+
+    All Keycloak + Jakarta + Nimbus deps are `provided` — they exist in the Keycloak runtime, so the
+    jar stays thin and nothing is shaded/duplicated onto the server classpath.
+  -->
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <keycloak.version>26.7.0</keycloak.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-server-spi-private</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- org.keycloak.Config (used by AuthenticatorFactory.init(Config.Scope)) lives here. -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-core</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-common</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.ws.rs</groupId>
+      <artifactId>jakarta.ws.rs-api</artifactId>
+      <version>3.1.0</version>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Bundled with the Keycloak runtime; used here for HS256 sign/verify of the consent token. -->
+    <dependency>
+      <groupId>com.nimbusds</groupId>
+      <artifactId>nimbus-jose-jwt</artifactId>
+      <version>9.46</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>keycloak-consent-redirect</finalName>
+  </build>
+</project>

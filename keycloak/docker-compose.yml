@@ -1,0 +1,45 @@
+# Self-hosted Keycloak (authorization server) + Postgres for the Ymax MCP setup.
+#
+#   CONSENT_SECRET=<>=32-byte random string> docker compose up --build
+#
+# Keycloak comes up on http://localhost:8080 (admin console: /admin, admin/admin by default).
+# The realm `ymax` is imported on FIRST boot only — Keycloak skips import if the realm already
+# exists, so to re-apply an edited realm-export.json run `docker compose down -v` first (drops the
+# Postgres volume) and `up` again.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - kc-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  keycloak:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres
+    environment:
+      # Admin bootstrap — renamed in Keycloak 26 (was KEYCLOAK_ADMIN[_PASSWORD]).
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_HEALTH_ENABLED: 'true'
+      # Shared HS256 secret for the consent-redirect authenticator. MUST equal the Worker's
+      # CONSENT_SECRET and be >= 32 bytes (Nimbus rejects shorter HS256 keys). Read as the SPI
+      # option `--spi-authenticator-ymax-consent-redirect-secret`.
+      KC_SPI_AUTHENTICATOR_YMAX_CONSENT_REDIRECT_SECRET: ${CONSENT_SECRET:?set CONSENT_SECRET to a >=32-byte random string}
+    command: ['start-dev', '--import-realm']
+    ports:
+      - '8080:8080'
+    restart: unless-stopped
+
+volumes:
+  kc-postgres:
