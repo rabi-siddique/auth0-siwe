@@ -4,3 +4,4 @@ node_modules
 *.pem
 .wrangler
 .dev.vars
+keycloak/authenticator/target/

@@ -15,8 +15,10 @@
     Output:  keycloak/authenticator/target/keycloak-consent-redirect.jar
     Deploy:  copy the jar into Keycloak's providers/ (the keycloak/Dockerfile does this).
 
-    All Keycloak + Jakarta + Nimbus deps are `provided` — they exist in the Keycloak runtime, so the
-    jar stays thin and nothing is shaded/duplicated onto the server classpath.
+    Keycloak + Jakarta deps are `provided` (they exist in the Keycloak runtime). Nimbus JOSE is NOT
+    on the provider classloader's path, so it is bundled via the shade plugin below with package
+    relocation — this isolates our copy (and json-smart) from Keycloak's, avoiding any classloader
+    or version conflict on the server classpath.
   -->
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
@@ -56,16 +58,42 @@
       <version>3.1.0</version>
       <scope>provided</scope>
     </dependency>
-    <!-- Bundled with the Keycloak runtime; used here for HS256 sign/verify of the consent token. -->
+    <!-- HS256 sign/verify of the consent token. NOT on the provider classloader path, so it is
+         shaded (with relocation) into the provider jar below. -->
     <dependency>
       <groupId>com.nimbusds</groupId>
       <artifactId>nimbus-jose-jwt</artifactId>
       <version>9.46</version>
-      <scope>provided</scope>
     </dependency>
   </dependencies>
 
   <build>
     <finalName>keycloak-consent-redirect</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.5.3</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <relocations>
+                <relocation>
+                  <pattern>com.nimbusds</pattern>
+                  <shadedPattern>app.ymax.shaded.com.nimbusds</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>net.minidev</pattern>
+                  <shadedPattern>app.ymax.shaded.net.minidev</shadedPattern>
+                </relocation>
+              </relocations>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
   </build>
 </project>

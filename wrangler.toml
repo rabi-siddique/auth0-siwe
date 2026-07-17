@@ -19,6 +19,6 @@ persist = true
 # value the realm's Audience mapper stamps) and redeploy. See README §8.
 # KEYCLOAK_ISSUER is the realm issuer with NO trailing slash, e.g. https://<kc-host>/realms/ymax.
 [vars]
-KEYCLOAK_ISSUER = "https://REPLACE-keycloak-host/realms/ymax"
+KEYCLOAK_ISSUER = "https://keycloak-ymax-w4skz.sevalla.app/realms/ymax"
 KEYCLOAK_AUDIENCE = "https://auth0-siwe-mcp.rs-first-cf.workers.dev/mcp"
 MCP_SERVER_URL = "https://auth0-siwe-mcp.rs-first-cf.workers.dev/mcp"
